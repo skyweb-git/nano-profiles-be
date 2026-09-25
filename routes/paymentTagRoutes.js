@@ -4,10 +4,11 @@ const authMiddleware = require('../middleware/auth');
 const { adminLimiter, studentProfileLimiter } = require('../middleware/rateLimiter');
 
 // ── Helper to build standard UPI deep links ──
-function buildUpiLinks({ payeeUpiId, amount }) {
+function buildUpiLinks({ payeeUpiId, payeeName, amount }) {
     const upid = String(payeeUpiId || '').trim();
     const cleanAmount = Number(amount || 0);
-    const baseQuery = `pa=${upid}&am=${cleanAmount}&cu=INR`;
+    const name = encodeURIComponent(String(payeeName || 'Merchant').trim());
+    const baseQuery = `pa=${upid}&pn=${name}&am=${cleanAmount}&cu=INR`;
 
     return {
         upiIntentUrl: `upi://pay?${baseQuery}`,
