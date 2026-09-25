@@ -157,19 +157,32 @@ app.post('/api/contact', (req, res) => {
     res.json({ success: true, message: 'Message received! We will get back to you soon.' });
 });
 
-// Serve Admin build
-const adminPath = path.join(__dirname, '..', 'admin', 'dist');
-app.use('/admin', express.static(adminPath));
-app.use('/p', express.static(adminPath));
-
-// Handle Admin/NFC subroutes
-app.get(['/admin/*', '/p/*'], (req, res) => {
-    res.sendFile(path.join(adminPath, 'index.html'));
+// Health check route
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
-// Serve landing page build
+// Serve Admin build (if deployed locally)
+const adminPath = path.join(__dirname, '..', 'admin', 'dist');
+if (fs.existsSync(adminPath)) {
+    app.use('/admin', express.static(adminPath));
+    app.use('/p', express.static(adminPath));
+}
+
+// Handle Admin/NFC subroutes
+app.get(['/admin/*', '/p/*'], (req, res, next) => {
+    const adminIndex = path.join(adminPath, 'index.html');
+    if (fs.existsSync(adminIndex)) {
+        return res.sendFile(adminIndex);
+    }
+    next();
+});
+
+// Serve landing page build (if deployed locally)
 const landingPagePath = path.join(__dirname, '..', 'landingpage', 'build');
-app.use(express.static(landingPagePath));
+if (fs.existsSync(landingPagePath)) {
+    app.use(express.static(landingPagePath));
+}
 
 // ── Dynamic OG meta tag injection for profile share previews ──
 // Intercepts profile URLs before the catch-all so crawlers (WhatsApp, Twitter, Slack etc.)
@@ -285,12 +298,29 @@ app.get('/link/:username', async (req, res, next) => {
     }
 });
 
-// Handle React routing in landing page (catch-all for everything else)
+// Root endpoint (friendly response for backend health / ping)
+app.get('/', (req, res) => {
+    const indexPath = path.join(landingPagePath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        return res.sendFile(indexPath);
+    }
+    res.json({
+        success: true,
+        message: 'Nano Profiles Backend API is running',
+        version: '1.0.0'
+    });
+});
+
+// Handle React routing in landing page (catch-all for frontend routes)
 app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path === '/health') {
         return next();
     }
-    res.sendFile(path.join(landingPagePath, 'index.html'));
+    const indexPath = path.join(landingPagePath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        return res.sendFile(indexPath);
+    }
+    next();
 });
 
 // 404 handler
