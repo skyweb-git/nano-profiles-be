@@ -1,0 +1,445 @@
+const mongoose = require('mongoose');
+
+const artistSchema = new mongoose.Schema({
+    artistId: {
+        type: String,
+        unique: true,
+        sparse: true,
+        index: true
+    },
+    name: {
+        type: String,
+        trim: true,
+        default: 'New Artist',
+        maxlength: [200, 'Artist name cannot exceed 200 characters']
+    },
+    isSetup: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
+    code: {
+        type: String,
+        unique: true,
+        index: true
+        // Format: AR + number (e.g., AR1, AR2)
+    },
+    codeNumber: {
+        type: Number,
+        index: true
+    },
+    bio: {
+        type: String,
+        trim: true,
+        default: '',
+        maxlength: [1000, 'Bio cannot exceed 1000 characters']
+    },
+    photo: {
+        type: String,
+        trim: true,
+        default: 'https://placehold.co/400x400/6366F1/FFFFFF?text=Artist'
+    },
+    backgroundPhoto: {
+        type: String,
+        trim: true,
+        default: 'https://placehold.co/1200x400/1e293b/FFFFFF?text=Creative+Background'
+    },
+    gallery: [{
+        url: { type: String, trim: true },
+        name: { type: String, trim: true, default: '' },
+        link: { type: String, trim: true, default: '' }
+    }],
+    phone: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    email: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        default: ''
+    },
+    // Primary link fields (used for icon grid on public profile)
+    website: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    instagram: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    facebook: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    twitter: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    whatsapp: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    linkedin: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    youtube: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    tiktok: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    spotify: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    snapchat: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    telegram: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    reddit: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    threads: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    discord: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    portfolio: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    pinterest: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    medium: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    twitch: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    quora: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    github: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    city: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    state: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    country: {
+        type: String,
+        trim: true,
+        default: 'India'
+    },
+    specialization: {
+        type: String,
+        trim: true,
+        default: ''
+        // e.g., Painter, Sculptor, Digital Artist, etc.
+    },
+    experience: {
+        type: String,
+        trim: true,
+        default: ''
+        // e.g., 2 years experience, Senior Artist, etc.
+    },
+    artworkCount: {
+        type: Number,
+        default: 0
+    },
+    // Payment / Account Details
+    upiId: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    paymentActive: {
+        type: Boolean,
+        default: false
+    },
+    paymentAmount: {
+        type: Number,
+        default: 0
+    },
+    paymentPayeeName: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    paymentNote: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    bankName: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    accountNumber: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    ifscCode: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    // Instagram Detailed Stats (Self-reported)
+    instagramName: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    instagramCategory: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    instagramPosts: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    instagramFollowers: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    instagramFollowing: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    instagramAccountBio: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    // Profile theme (controls card colors/typography presets on public profile)
+    profileTheme: {
+        type: String,
+        trim: true,
+        default: 'mono', // mono, classic, neon, minimal etc.
+    },
+    profileFont: {
+        type: String,
+        trim: true,
+        default: 'outfit'
+    },
+    bioFont: {
+        type: String,
+        trim: true,
+        default: 'outfit'
+    },
+    // Visibility toggles for each profile section
+    showPhoto: {
+        type: Boolean,
+        default: true
+    },
+    showName: {
+        type: Boolean,
+        default: true
+    },
+    showLocation: {
+        type: Boolean,
+        default: true
+    },
+    showSpecialization: {
+        type: Boolean,
+        default: true
+    },
+    showAbout: {
+        type: Boolean,
+        default: true
+    },
+    showConnect: {
+        type: Boolean,
+        default: true
+    },
+    showWhatIDo: {
+        type: Boolean,
+        default: true
+    },
+    showArtPortfolio: {
+        type: Boolean,
+        default: true
+    },
+    showGallery: {
+        type: Boolean,
+        default: true
+    },
+    // External art platform links (Behance, ArtStation, Etsy, etc.)
+    artLinks: {
+        type: mongoose.Schema.Types.Mixed,
+        default: () => ({})
+    },
+    links: [{
+        title: { type: String, trim: true, default: '' },
+        url: { type: String, trim: true, default: '' },
+        platform: { type: String, trim: true, default: '' },
+        image: { type: String, trim: true, default: '' },
+        prioritizeType: { type: String, trim: true, default: 'none' }, // 'none', 'animate', 'redirect'
+        animationType: { type: String, trim: true, default: 'buzz' }, // 'buzz', 'wobble', 'pop', 'swipe'
+        order: { type: Number, default: 0 }
+    }],
+    // Secure access token for NFC tag
+    accessToken: {
+        type: String,
+        unique: true,
+        sparse: true,
+        index: true
+    },
+    scanCount: {
+        type: Number,
+        default: 0
+    },
+    lastScanned: {
+        type: Date,
+        default: null
+    },
+    // Admin-editable badge overrides (optional). When set, profile uses these for badge display.
+    // e.g. { rising: 1, curator: 3, popular: 5, portfolio: 2, connector: 4, legend: 10 }
+    badgeOverrides: {
+        type: mongoose.Schema.Types.Mixed,
+        default: () => ({})
+    },
+    isActive: {
+        type: Boolean,
+        default: true,
+        index: true
+    },
+    ownerEmail: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        index: true
+    },
+    ownerUid: {
+        type: String,
+        index: true
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    }
+}, {
+    timestamps: true
+});
+
+// Auto-generate artist code and ID before validation
+artistSchema.pre('validate', async function (next) {
+    // Only for new documents
+    if (!this.isNew) {
+        return next();
+    }
+
+    try {
+        // Artist ID (AT-01, etc.) auto-generation removed as requested.
+        // We now rely on provided artistId or fallback to other identifiers.
+
+
+        // 2. Consistent Artist Code (codeNumber must be a finite number — custom slugs like "capvamshi" have no "-NN" tail)
+        if (!this.code) {
+            this.code = this.artistId;
+            const parts = String(this.artistId).split('-');
+            const tail = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+            const n = parseInt(tail, 10);
+            this.codeNumber = Number.isFinite(n) ? n : 0;
+        }
+
+        next();
+    } catch (error) {
+        console.error('Error in artist pre-validate hook:', error);
+        next(error);
+    }
+});
+
+// Auto-generate secure access token after save (for NFC tags)
+artistSchema.post('save', async function (doc) {
+    try {
+        // Generate access token if not exists
+        if (!doc.accessToken) {
+            const AccessToken = mongoose.model('AccessToken');
+            const tokenDoc = await AccessToken.createArtistPermanentToken(
+                doc.artistId,
+                `NFC Tag for Artist ${doc.name}`
+            );
+
+            // Save token to artist record
+            doc.accessToken = tokenDoc.token;
+            await doc.constructor.findByIdAndUpdate(doc._id, {
+                accessToken: tokenDoc.token
+            });
+        }
+    } catch (error) {
+        console.error('Error in artist post-save hook:', error);
+    }
+});
+
+// Method to record scan
+artistSchema.methods.recordScan = function () {
+    this.scanCount += 1;
+    this.lastScanned = new Date();
+    return this.save();
+};
+
+// Method to generate secure NFC URL with token
+artistSchema.methods.generateNFCUrl = function (baseUrl = 'http://localhost:5173') {
+    if (!this.accessToken) {
+        throw new Error('Access token not generated for this artist');
+    }
+    return `${baseUrl}/artist/${this.accessToken}`;
+};
+
+module.exports = mongoose.model('Artist', artistSchema);

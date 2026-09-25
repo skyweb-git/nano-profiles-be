@@ -1,0 +1,807 @@
+const express = require('express');
+const router = express.Router();
+const jwt = require('jsonwebtoken');
+const validator = require('validator');
+const Student = require('../models/Student');
+const School = require('../models/School');
+const Artist = require('../models/Artist');
+const GeneralProfile = require('../models/GeneralProfile');
+const authMiddleware = require('../middleware/auth');
+
+const { checkProfileConflict, getProfileConflicts, generateUsernameSuggestions } = require('../utils/profileUtils');
+
+
+
+
+const { adminLimiter, loginLimiter } = require('../middleware/rateLimiter');
+const { validateStudentData, resolveStudentClassFromSchoolClass } = require('../middleware/validator');
+const { generateOtp, setAdminOtp, consumeAdminOtp } = require('../utils/otpStore');
+const { sendOtpEmail, sendWelcomeEmail, isConfigured: isSmtpConfigured } = require('../utils/sendMail');
+const multer = require('multer');
+const { uploadBuffer } = require('../utils/cloudinary');
+
+const adminCookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000,
+    path: '/'
+};
+
+// @route   GET /api/admin/check-availability
+// @desc    Check if username or email is taken (cross-collection)
+// @access  Protected
+router.get('/check-availability', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const { username, email, excludeId } = req.query;
+        const conflicts = await getProfileConflicts(username, email, excludeId);
+        const hasConflict = !!(conflicts.username || conflicts.email);
+        
+        let suggestions = [];
+        if (conflicts.username && username) {
+            suggestions = await generateUsernameSuggestions(username);
+        }
+
+        res.json({ 
+            success: true, 
+            available: !hasConflict, 
+            conflicts: conflicts,
+            suggestions: suggestions
+        });
+
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// Only this email is allowed for admin login (no passwords, no usernames)
+const ALLOWED_ADMIN_EMAIL = 'skywebdevelopers123@gmail.com';
+
+// @route   POST /api/admin/send-otp
+// @desc    Send OTP to allowed admin email
+// @access  Public
+router.post('/send-otp', loginLimiter, async (req, res) => {
+    try {
+        const email = (req.body.email || '').trim().toLowerCase();
+        if (!validator.isEmail(email)) {
+            return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
+        }
+        if (email !== ALLOWED_ADMIN_EMAIL) {
+            return res.status(403).json({ success: false, message: 'This email is not authorized for admin access.' });
+        }
+        if (!isSmtpConfigured()) {
+            return res.status(503).json({ success: false, message: 'Email service is not configured. Contact support.' });
+        }
+        const otp = generateOtp();
+        setAdminOtp(email, otp);
+        await sendOtpEmail(email, otp, {
+            subject: 'Your admin login code – NFC School',
+            textPrefix: 'Your admin verification code',
+            subtitle: 'Admin login verification'
+        });
+        res.json({ success: true, message: 'Verification code sent to your email.' });
+    } catch (error) {
+        console.error('Send OTP error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Failed to send code.' });
+    }
+});
+
+// @route   POST /api/admin/verify-otp
+// @desc    Verify OTP and return admin JWT
+// @access  Public
+router.post('/verify-otp', loginLimiter, async (req, res) => {
+    try {
+        const email = (req.body.email || '').trim().toLowerCase();
+        const otp = (req.body.otp || '').trim();
+        if (!validator.isEmail(email) || email !== ALLOWED_ADMIN_EMAIL) {
+            return res.status(400).json({ success: false, message: 'Invalid email.' });
+        }
+        if (!otp || otp.length !== 6) {
+            return res.status(400).json({ success: false, message: 'Please enter the 6-digit code.' });
+        }
+        if (!consumeAdminOtp(email, otp)) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired code. Request a new one.' });
+        }
+        const token = jwt.sign(
+            { email, type: 'admin' },
+            process.env.JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+        res.cookie('admin_token', token, adminCookieOptions);
+        res.json({
+            success: true,
+            message: 'Login successful',
+            admin: { email }
+        });
+    } catch (error) {
+        console.error('Verify OTP error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Verification failed.' });
+    }
+});
+
+// @route   GET /api/admin/session
+// @desc    Check whether the admin auth cookie/bearer token is valid
+// @access  Protected
+router.get('/session', authMiddleware, adminLimiter, (req, res) => {
+    res.json({ success: true, admin: { email: req.admin.email } });
+});
+
+// @route   POST /api/admin/logout
+// @desc    Clear admin auth cookie
+// @access  Public
+router.post('/logout', (req, res) => {
+    res.clearCookie('admin_token', {
+        httpOnly: adminCookieOptions.httpOnly,
+        secure: adminCookieOptions.secure,
+        sameSite: adminCookieOptions.sameSite,
+        path: adminCookieOptions.path
+    });
+    res.json({ success: true, message: 'Logged out' });
+});
+
+// @route   GET /api/admin/students
+// @desc    Get all students
+// @access  Protected
+router.get('/students', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const { page = 1, limit = 50, search = '', status = 'all' } = req.query;
+
+        const query = {};
+
+        // Filter by active status
+        if (status === 'active') {
+            query.isActive = true;
+        } else if (status === 'inactive') {
+            query.isActive = false;
+        }
+
+        // Search functionality
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { rollNumber: { $regex: search, $options: 'i' } },
+                { studentId: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        const students = await Student.find(query)
+            .limit(limit * 1)
+            .skip((page - 1) * limit)
+            .sort({ createdAt: -1 })
+            .select('-scanHistory'); // Exclude detailed scan history
+
+        const count = await Student.countDocuments(query);
+
+        res.json({
+            success: true,
+            data: students,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page,
+            total: count
+        });
+    } catch (error) {
+        console.error('Error fetching students:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching students'
+        });
+    }
+});
+
+// @route   POST /api/admin/students
+// @desc    Add new student
+// @access  Protected
+router.post('/students', authMiddleware, adminLimiter, resolveStudentClassFromSchoolClass, validateStudentData, async (req, res) => {
+    try {
+        const studentData = req.body;
+
+        // Check if roll number already exists
+        const existingStudent = await Student.findOne({ rollNumber: studentData.rollNumber });
+        if (existingStudent) {
+            return res.status(400).json({
+                success: false,
+                message: 'A student with this roll number already exists'
+            });
+        }
+
+        const student = new Student(studentData);
+        if (req.body.nickname != null && String(req.body.nickname).trim() !== '') {
+            student.nickname = String(req.body.nickname).trim();
+        }
+        await student.save();
+
+        // Reload so accessToken from post-save hook is present before building NFC URL
+        const saved = await Student.findById(student._id);
+        let nfcUrl = null;
+        try {
+            if (saved && saved.accessToken) {
+                nfcUrl = saved.generateNFCUrl(process.env.FRONTEND_URL || 'http://localhost:5173');
+            }
+        } catch (e) {
+            console.warn('Could not build nfcUrl for new student:', e.message);
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Student added successfully',
+            data: saved || student,
+            nfcUrl
+        });
+    } catch (error) {
+        console.error('Error adding student:', error);
+
+        if (error.code === 11000) {
+            return res.status(400).json({
+                success: false,
+                message: 'Student with this roll number or ID already exists'
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Server error while adding student'
+        });
+    }
+});
+
+// @route   GET /api/admin/students/:id
+// @desc    Get single student with full details
+// @access  Protected
+router.get('/students/:id', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const student = await Student.findOne({ studentId: req.params.id });
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                message: 'Student not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: student,
+            nfcUrl: student.generateNFCUrl(process.env.FRONTEND_URL || 'http://localhost:5173')
+        });
+    } catch (error) {
+        console.error('Error fetching student:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching student'
+        });
+    }
+});
+
+// @route   PUT /api/admin/students/:id
+// @desc    Update student
+// @access  Protected
+router.put('/students/:id', authMiddleware, adminLimiter, resolveStudentClassFromSchoolClass, validateStudentData, async (req, res) => {
+    try {
+        const student = await Student.findOne({ studentId: req.params.id });
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                message: 'Student not found'
+            });
+        }
+
+        // Check if roll number is being changed and if it already exists
+        if (req.body.rollNumber && req.body.rollNumber !== student.rollNumber) {
+            const existingStudent = await Student.findOne({ rollNumber: req.body.rollNumber });
+            if (existingStudent) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'A student with this roll number already exists'
+                });
+            }
+        }
+
+        // Update fields
+        Object.assign(student, req.body);
+        await student.save();
+
+        res.json({
+            success: true,
+            message: 'Student updated successfully',
+            data: student
+        });
+    } catch (error) {
+        console.error('Error updating student:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while updating student'
+        });
+    }
+});
+
+// @route   DELETE /api/admin/students/:id
+// @desc    Delete student
+// @access  Protected
+router.delete('/students/:id', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const student = await Student.findOneAndDelete({ studentId: req.params.id });
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                message: 'Student not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Student deleted successfully'
+        });
+    } catch (error) {
+        console.error('Error deleting student:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while deleting student'
+        });
+    }
+});
+
+// @route   POST /api/admin/students/:id/toggle-status
+// @desc    Enable/Disable student tag
+// @access  Protected
+router.post('/students/:id/toggle-status', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const student = await Student.findOne({ studentId: req.params.id });
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                message: 'Student not found'
+            });
+        }
+
+        student.isActive = !student.isActive;
+        await student.save();
+
+        res.json({
+            success: true,
+            message: `Student tag ${student.isActive ? 'enabled' : 'disabled'} successfully`,
+            data: student
+        });
+    } catch (error) {
+        console.error('Error toggling student status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while toggling student status'
+        });
+    }
+});
+
+// ---------- Artists (admin: list, get, update e.g. badges) ----------
+// @route   GET /api/admin/artists
+// @desc    Get all artists
+// @access  Protected
+router.get('/artists', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const { search = '' } = req.query;
+        const query = {};
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { artistId: { $regex: search, $options: 'i' } },
+                { code: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } }
+            ];
+        }
+        const artists = await Artist.find(query)
+            .sort({ createdAt: -1 })
+            .select('_id artistId name code email isSetup scanCount badgeOverrides isActive createdAt');
+        res.json({
+            success: true,
+            data: artists,
+            total: artists.length
+        });
+    } catch (error) {
+        console.error('Error fetching artists:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching artists'
+        });
+    }
+});
+
+// @route   GET /api/admin/artists/:id
+// @desc    Get single artist (MongoDB _id)
+// @access  Protected
+router.get('/artists/:id', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const artist = await Artist.findById(req.params.id);
+        if (!artist) {
+            return res.status(404).json({
+                success: false,
+                message: 'Artist not found'
+            });
+        }
+        res.json({
+            success: true,
+            data: artist
+        });
+    } catch (error) {
+        console.error('Error fetching artist:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching artist'
+        });
+    }
+});
+
+// @route   PUT /api/admin/artists/:id
+// @desc    Update artist (e.g. badge overrides)
+// @access  Protected
+router.put('/artists/:id', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const allowed = ['artistId', 'name', 'email', 'bio', 'specialization', 'badgeOverrides', 'isActive', 'isSetup'];
+        const updateData = {};
+        allowed.forEach(key => {
+            if (req.body[key] !== undefined) updateData[key] = req.body[key];
+        });
+
+        if (updateData.artistId || updateData.email) {
+            const normalizedUsername = updateData.artistId ? String(updateData.artistId).toLowerCase().trim().replace(/\s+/g, '_') : null;
+            const normalizedEmail = updateData.email ? String(updateData.email).toLowerCase().trim() : null;
+
+            if (normalizedUsername && !/^[a-z0-9_-]+$/.test(normalizedUsername)) {
+                return res.status(400).json({ success: false, message: 'Invalid username format.' });
+            }
+            
+            // Check for conflicts across all profile types
+            const conflict = await checkProfileConflict(normalizedUsername, normalizedEmail, req.params.id);
+            if (conflict) {
+                return res.status(400).json({ success: false, message: conflict });
+            }
+            if (normalizedUsername) updateData.artistId = normalizedUsername;
+            if (normalizedEmail) {
+                updateData.email = normalizedEmail;
+                updateData.ownerEmail = normalizedEmail; // Sync ownerEmail as well
+            }
+        }
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No allowed fields to update'
+            });
+        }
+        updateData.updatedAt = new Date();
+        const artist = await Artist.findByIdAndUpdate(
+            req.params.id,
+            { $set: updateData },
+            { new: true, runValidators: true }
+        );
+        if (!artist) {
+            return res.status(404).json({
+                success: false,
+                message: 'Artist not found'
+            });
+        }
+        res.json({
+            success: true,
+            message: 'Artist updated successfully',
+            data: artist
+        });
+    } catch (error) {
+        console.error('Error updating artist:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating artist'
+        });
+    }
+});
+
+// Artist delete is registered on the root app in server.js (DELETE + POST) so it always loads with the API process.
+
+// ---------- General Profiles (admin: list, get, create, update, delete) ----------
+const adminUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+function normalizeProfileType(raw) {
+    const v = String(raw || '').toLowerCase().trim();
+    if (v === 'restaurant' || v === 'resturent' || v === 'resturant') return 'restaurant';
+    return 'general';
+}
+
+function buildTypeQueryCond(requestedType) {
+    if (requestedType === 'restaurant') {
+        return {
+            $or: [
+                { profileType: 'restaurant' },
+                {
+                    $and: [
+                        { $or: [{ profileType: { $exists: false } }, { profileType: null }] },
+                        { menuPdf: { $exists: true, $ne: '' } }
+                    ]
+                }
+            ]
+        };
+    }
+
+    return {
+        $or: [
+            { profileType: 'general' },
+            {
+                $and: [
+                    { $or: [{ profileType: { $exists: false } }, { profileType: null }] },
+                    { $or: [{ menuPdf: { $exists: false } }, { menuPdf: '' }] }
+                ]
+            }
+        ]
+    };
+}
+
+// @route   POST /api/admin/general-profiles/upload-pdf
+// @desc    Upload restaurant menu PDF to Cloudinary (admin)
+// @access  Protected
+router.post('/general-profiles/upload-pdf', authMiddleware, adminLimiter, adminUpload.single('file'), async (req, res) => {
+    try {
+        if (!req.file || !req.file.buffer) {
+            return res.status(400).json({ success: false, message: 'No file uploaded' });
+        }
+        const result = await uploadBuffer(req.file.buffer, {
+            folder: 'nfc/restaurant-menus',
+            resource_type: 'raw'
+        });
+        res.json({ success: true, url: result.secure_url });
+    } catch (error) {
+        console.error('Admin PDF upload error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Upload failed' });
+    }
+});
+
+router.get('/general-profiles', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const { search = '', type } = req.query;
+        const query = {};
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { username: { $regex: search, $options: 'i' } },
+                { title: { $regex: search, $options: 'i' } },
+                { ownerEmail: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        if (type) {
+            const requestedType = normalizeProfileType(type);
+            query.$and = query.$and || [];
+            query.$and.push(buildTypeQueryCond(requestedType));
+        }
+
+        const profiles = await GeneralProfile.find(query).sort({ createdAt: -1 });
+        res.json({ success: true, data: profiles, total: profiles.length });
+    } catch (error) {
+        console.error('Error fetching general profiles:', error);
+        res.status(500).json({ success: false, message: 'Error fetching general profiles' });
+    }
+});
+
+router.get('/general-profiles/stats', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const totalProfiles = await GeneralProfile.countDocuments();
+        const recentProfiles = await GeneralProfile.find()
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .select('username name createdAt');
+        res.json({ success: true, data: { totalProfiles, recentProfiles } });
+    } catch (error) {
+        console.error('Error fetching general profile stats:', error);
+        res.status(500).json({ success: false, message: 'Error fetching stats' });
+    }
+});
+
+router.get('/general-profiles/:id', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const profile = await GeneralProfile.findById(req.params.id);
+        if (!profile) {
+            return res.status(404).json({ success: false, message: 'Profile not found' });
+        }
+        res.json({ success: true, data: profile });
+    } catch (error) {
+        console.error('Error fetching general profile:', error);
+        res.status(500).json({ success: false, message: 'Error fetching profile' });
+    }
+});
+
+router.post('/general-profiles', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const { username, name, title, bio, photo, menuPdf, theme, font, bioFont, links, social } = req.body;
+        const profileType = normalizeProfileType(req.body.profileType || req.body.type || (menuPdf && String(menuPdf).trim() ? 'restaurant' : 'general'));
+        const normalizedUsername = (username || '').toLowerCase().trim().replace(/\s+/g, '_');
+        if (!normalizedUsername || !/^[a-z0-9_-]+$/.test(normalizedUsername)) {
+            return res.status(400).json({ success: false, message: 'Username must contain only letters, numbers, underscores, and hyphens.' });
+        }
+        const conflict = await checkProfileConflict(normalizedUsername, req.body.ownerEmail);
+        if (conflict) {
+            return res.status(400).json({ success: false, message: conflict });
+        }
+        const profile = await GeneralProfile.create({
+            username: normalizedUsername,
+            name: name || '',
+            title: title || '',
+            bio: bio || '',
+            photo: photo || '',
+            menuPdf: menuPdf || '',
+            theme: theme || 'mint',
+            font: font || 'outfit',
+            bioFont: bioFont || font || 'outfit',
+            links: Array.isArray(links) ? links : [],
+            social: social || {},
+            profileType,
+            ownerEmail: (req.body.ownerEmail || '').toLowerCase().trim()
+        });
+        res.json({ success: true, data: profile });
+        
+        // Send welcome email asynchronously
+        if (isSmtpConfigured()) {
+            sendWelcomeEmail(profile.ownerEmail, profile.name, profile.username).catch(err => {
+                console.error('Error sending welcome email to general profile:', err.message);
+            });
+        }
+    } catch (error) {
+        console.error('Error creating general profile:', error);
+        res.status(500).json({ success: false, message: error.message || 'Error creating profile' });
+    }
+});
+
+// @route   POST /api/admin/artists
+// @desc    Create new artist profile (admin)
+// @access  Protected
+router.post('/artists', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const { name, email, specialization, bio, isActive, artistId } = req.body;
+        
+        const normalizedEmail = (email || '').toLowerCase().trim();
+        if (!normalizedEmail || !validator.isEmail(normalizedEmail)) {
+            return res.status(400).json({ success: false, message: 'A valid email is mandatory.' });
+        }
+
+        const normalizedUsername = (artistId || '').toLowerCase().trim().replace(/\s+/g, '_');
+        if (!normalizedUsername || !/^[a-z0-9_-]+$/.test(normalizedUsername)) {
+            return res.status(400).json({ success: false, message: 'Username must contain only letters, numbers, underscores, and hyphens.' });
+        }
+
+        // Check if artist with this email or username already exists (cross-check)
+        const conflict = await checkProfileConflict(normalizedUsername, normalizedEmail);
+        if (conflict) {
+            return res.status(400).json({ success: false, message: conflict });
+        }
+
+        const artist = new Artist({
+            artistId: normalizedUsername,
+            name: name || 'New Artist',
+            email: normalizedEmail,
+            ownerEmail: normalizedEmail,
+            specialization: specialization || '',
+            bio: bio || '',
+            isActive: isActive !== undefined ? isActive : true,
+            isSetup: true // Set to true so user goes directly to dashboard
+        });
+
+        await artist.save();
+        
+        // Reload to get the generated IDs and tokens
+        const saved = await Artist.findById(artist._id);
+        
+        res.json({ 
+            success: true, 
+            message: 'Artist profile created successfully',
+            data: saved 
+        });
+
+        // Send welcome email asynchronously
+        if (isSmtpConfigured()) {
+            sendWelcomeEmail(normalizedEmail, name || 'Artist', normalizedUsername).catch(err => {
+                console.error('Error sending welcome email to artist:', err.message);
+            });
+        }
+    } catch (error) {
+        console.error('Error creating artist profile:', error);
+        res.status(500).json({ success: false, message: error.message || 'Error creating artist' });
+    }
+});
+
+router.put('/general-profiles/:id', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const profile = await GeneralProfile.findById(req.params.id);
+        if (!profile) {
+            return res.status(404).json({ success: false, message: 'Profile not found' });
+        }
+        const { username, name, title, bio, photo, menuPdf, theme, font, bioFont, links, social } = req.body;
+
+        const profileType =
+            req.body.profileType || req.body.type
+                ? normalizeProfileType(req.body.profileType || req.body.type)
+                : (menuPdf !== undefined && menuPdf !== null)
+                    ? (menuPdf && String(menuPdf).trim() ? 'restaurant' : 'general')
+                    : profile.profileType || 'general';
+
+        if (username !== undefined || req.body.ownerEmail !== undefined) {
+            const normalizedUsername = (username || profile.username).toLowerCase().trim().replace(/\s+/g, '_');
+            const normalizedEmail = (req.body.ownerEmail || profile.ownerEmail);
+            
+            if (!normalizedUsername || !/^[a-z0-9_-]+$/.test(normalizedUsername)) {
+                return res.status(400).json({ success: false, message: 'Invalid username format.' });
+            }
+
+            const conflict = await checkProfileConflict(normalizedUsername, normalizedEmail, req.params.id);
+            if (conflict) {
+                return res.status(400).json({ success: false, message: conflict });
+            }
+            profile.username = normalizedUsername;
+            if (req.body.ownerEmail !== undefined) profile.ownerEmail = normalizedEmail;
+        }
+        if (name !== undefined) profile.name = name;
+        if (title !== undefined) profile.title = title;
+        if (bio !== undefined) profile.bio = bio;
+        if (photo !== undefined) profile.photo = photo;
+        if (menuPdf !== undefined) profile.menuPdf = menuPdf;
+        if (theme !== undefined) profile.theme = theme;
+        if (font !== undefined) profile.font = font;
+        if (bioFont !== undefined) profile.bioFont = bioFont;
+        if (Array.isArray(links)) profile.links = links;
+        if (social && typeof social === 'object') profile.social = { ...profile.social.toObject?.() || profile.social, ...social };
+        profile.profileType = profileType;
+        await profile.save();
+        res.json({ success: true, message: 'Profile updated successfully', data: profile });
+    } catch (error) {
+        console.error('Error updating general profile:', error);
+        res.status(500).json({ success: false, message: error.message || 'Error updating profile' });
+    }
+});
+
+router.delete('/general-profiles/:id', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const profile = await GeneralProfile.findByIdAndDelete(req.params.id);
+        if (!profile) {
+            return res.status(404).json({ success: false, message: 'Profile not found' });
+        }
+        res.json({ success: true, message: 'General profile deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting general profile:', error);
+        res.status(500).json({ success: false, message: 'Error deleting profile' });
+    }
+});
+
+// @route   GET /api/admin/stats
+// @desc    Get dashboard statistics
+// @access  Protected
+router.get('/stats', authMiddleware, adminLimiter, async (req, res) => {
+    try {
+        const totalSchools = await School.countDocuments();
+        const totalStudents = await Student.countDocuments();
+        const activeStudents = await Student.countDocuments({ isActive: true });
+        const inactiveStudents = await Student.countDocuments({ isActive: false });
+        const totalScans = await Student.aggregate([
+            { $group: { _id: null, total: { $sum: '$scanCount' } } }
+        ]);
+
+        const recentScans = await Student.find({ lastScanned: { $ne: null } })
+            .sort({ lastScanned: -1 })
+            .limit(10)
+            .select('studentId name rollNumber lastScanned scanCount');
+
+        res.json({
+            success: true,
+            data: {
+                totalSchools,
+                totalStudents,
+                activeStudents,
+                inactiveStudents,
+                totalScans: totalScans[0]?.total || 0,
+                recentScans
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching stats:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching statistics'
+        });
+    }
+});
+
+module.exports = router;
