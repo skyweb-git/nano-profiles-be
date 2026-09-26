@@ -109,6 +109,7 @@ function normalizeSuggestionsInput(raw) {
 function normalizeProfileType(raw) {
     const v = String(raw || '').toLowerCase().trim();
     if (v === 'restaurant' || v === 'resturent' || v === 'resturant') return 'restaurant';
+    if (v === 'founder') return 'founder';
     return 'general';
 }
 
@@ -126,6 +127,10 @@ function buildTypeQueryCond(requestedType) {
                 }
             ]
         };
+    }
+
+    if (requestedType === 'founder') {
+        return { profileType: 'founder' };
     }
 
     // general
@@ -181,7 +186,25 @@ function mapGeneralProfileResponse(profile, requestedType) {
         upiId: profile.upiId || '',
         paymentAmount: profile.paymentAmount || 0,
         paymentPayeeName: profile.paymentPayeeName || profile.name || '',
-        paymentNote: profile.paymentNote || ''
+        paymentNote: profile.paymentNote || '',
+        // Founder-specific fields
+        companyName: profile.companyName || '',
+        companyWebsite: profile.companyWebsite || '',
+        foundingYear: profile.foundingYear || '',
+        companyDescription: profile.companyDescription || '',
+        companyImage: profile.companyImage || '',
+        fundingStage: profile.fundingStage || '',
+        teamSize: profile.teamSize || '',
+        pitchDeckPdf: profile.pitchDeckPdf || '',
+        ctaLabel: profile.ctaLabel || 'Book a Call',
+        ctaUrl: profile.ctaUrl || '',
+        coFounders: profile.coFounders || [],
+        milestones: profile.milestones || [],
+        showCompany: profile.showCompany !== false,
+        showPitchDeck: profile.showPitchDeck !== false,
+        showCoFounders: profile.showCoFounders !== false,
+        showMilestones: profile.showMilestones !== false,
+        showCta: profile.showCta !== false,
     };
 }
 
@@ -210,6 +233,9 @@ router.post('/upload-pdf', firebaseAuth, upload.single('file'), async (req, res)
 // @access  Public
 router.get('/u/:username', async (req, res) => {
     try {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         const username = req.params.username.toLowerCase().trim();
         const profile = await GeneralProfile.findOne({ username }).lean();
         if (!profile) {
@@ -220,7 +246,7 @@ router.get('/u/:username', async (req, res) => {
         }
         res.json({
             success: true,
-            data: mapGeneralProfileResponse(profile, 'general')
+            data: mapGeneralProfileResponse(profile, profile.profileType || 'general')
         });
     } catch (error) {
         console.error('Error fetching general profile:', error);
@@ -242,7 +268,10 @@ router.get('/me', firebaseAuth, async (req, res) => {
         const ownerCond = { $or: [{ ownerUid: uid }, { ownerEmail: email }] };
         const typeCond = buildTypeQueryCond(requestedType);
 
-        const profile = await GeneralProfile.findOne({ $and: [ownerCond, typeCond] }).lean();
+        let profile = await GeneralProfile.findOne({ $and: [ownerCond, typeCond] }).lean();
+        if (!profile && (requestedType === 'restaurant' || requestedType === 'founder')) {
+            profile = await GeneralProfile.findOne(ownerCond).lean();
+        }
         if (!profile) {
             return res.json({ success: true, data: null });
         }
@@ -310,7 +339,25 @@ router.post('/', firebaseAuth, async (req, res) => {
             showWhatIDo: showWhatIDo !== false,
             showArtPortfolio: showArtPortfolio !== false,
             showGallery: showGallery !== false,
-            artLinks: artLinks || {}
+            artLinks: artLinks || {},
+            // Founder-specific fields
+            companyName: String(req.body.companyName || '').trim(),
+            companyWebsite: String(req.body.companyWebsite || '').trim(),
+            foundingYear: String(req.body.foundingYear || '').trim(),
+            companyDescription: String(req.body.companyDescription || '').trim(),
+            companyImage: String(req.body.companyImage || '').trim(),
+            fundingStage: String(req.body.fundingStage || '').trim(),
+            teamSize: String(req.body.teamSize || '').trim(),
+            pitchDeckPdf: String(req.body.pitchDeckPdf || '').trim(),
+            ctaLabel: String(req.body.ctaLabel || 'Book a Call').trim(),
+            ctaUrl: String(req.body.ctaUrl || '').trim(),
+            coFounders: Array.isArray(req.body.coFounders) ? req.body.coFounders : [],
+            milestones: Array.isArray(req.body.milestones) ? req.body.milestones : [],
+            showCompany: req.body.showCompany !== false,
+            showPitchDeck: req.body.showPitchDeck !== false,
+            showCoFounders: req.body.showCoFounders !== false,
+            showMilestones: req.body.showMilestones !== false,
+            showCta: req.body.showCta !== false
         });
 
         res.json({
@@ -341,13 +388,18 @@ router.put('/me', firebaseAuth, async (req, res) => {
         const { uid, email } = req.firebaseUser;
         const { username, name, title, bio, phone, email: contactEmail, photo, banner, menuPdf, theme, font, bioFont, links, social, gallery, suggestions, suggestionsTitle, city, state, specialization,
             showPhoto, showName, showLocation, showSpecialization, showAbout, showConnect, showWhatIDo, showArtPortfolio, showGallery, artLinks, isSetup } = req.body;
-        const requestedType = normalizeProfileType(req.body.profileType || req.body.type || 'general');
+        const requestedType = (req.body.profileType || req.body.type)
+            ? normalizeProfileType(req.body.profileType || req.body.type)
+            : null;
 
         const ownerCond = { $or: [{ ownerUid: uid }, { ownerEmail: email }] };
-        const typeCond = buildTypeQueryCond(requestedType);
-        let profile = await GeneralProfile.findOne({ $and: [ownerCond, typeCond] });
-        // One document per username: upgrading "general" → "restaurant" must update the same row.
-        if (!profile && requestedType === 'restaurant') {
+        let profile;
+        if (requestedType) {
+            const typeCond = buildTypeQueryCond(requestedType);
+            profile = await GeneralProfile.findOne({ $and: [ownerCond, typeCond] });
+        }
+        // One document per username: upgrading "general" → "restaurant" or "founder" must update the same row.
+        if (!profile) {
             profile = await GeneralProfile.findOne(ownerCond);
         }
         if (!profile) {
@@ -358,7 +410,11 @@ router.put('/me', firebaseAuth, async (req, res) => {
         }
 
         const updates = {};
-        updates.profileType = requestedType;
+        if (requestedType) {
+            updates.profileType = requestedType;
+        } else if (!profile.profileType) {
+            updates.profileType = 'general';
+        }
         if (name !== undefined) updates.name = name;
         if (title !== undefined) updates.title = title;
         if (bio !== undefined) updates.bio = bio;
@@ -394,6 +450,25 @@ router.put('/me', firebaseAuth, async (req, res) => {
         if (req.body.paymentAmount !== undefined) updates.paymentAmount = Number(req.body.paymentAmount) || 0;
         if (req.body.paymentPayeeName !== undefined) updates.paymentPayeeName = (req.body.paymentPayeeName || '').trim();
         if (req.body.paymentNote !== undefined) updates.paymentNote = (req.body.paymentNote || '').trim();
+
+        // Founder-specific fields
+        if (req.body.companyName !== undefined) updates.companyName = String(req.body.companyName || '').trim();
+        if (req.body.companyWebsite !== undefined) updates.companyWebsite = String(req.body.companyWebsite || '').trim();
+        if (req.body.foundingYear !== undefined) updates.foundingYear = String(req.body.foundingYear || '').trim();
+        if (req.body.companyDescription !== undefined) updates.companyDescription = String(req.body.companyDescription || '').trim();
+        if (req.body.companyImage !== undefined) updates.companyImage = String(req.body.companyImage || '').trim();
+        if (req.body.fundingStage !== undefined) updates.fundingStage = String(req.body.fundingStage || '').trim();
+        if (req.body.teamSize !== undefined) updates.teamSize = String(req.body.teamSize || '').trim();
+        if (req.body.pitchDeckPdf !== undefined) updates.pitchDeckPdf = String(req.body.pitchDeckPdf || '').trim();
+        if (req.body.ctaLabel !== undefined) updates.ctaLabel = String(req.body.ctaLabel || '').trim();
+        if (req.body.ctaUrl !== undefined) updates.ctaUrl = String(req.body.ctaUrl || '').trim();
+        if (Array.isArray(req.body.coFounders)) updates.coFounders = req.body.coFounders;
+        if (Array.isArray(req.body.milestones)) updates.milestones = req.body.milestones;
+        if (req.body.showCompany !== undefined) updates.showCompany = Boolean(req.body.showCompany);
+        if (req.body.showPitchDeck !== undefined) updates.showPitchDeck = Boolean(req.body.showPitchDeck);
+        if (req.body.showCoFounders !== undefined) updates.showCoFounders = Boolean(req.body.showCoFounders);
+        if (req.body.showMilestones !== undefined) updates.showMilestones = Boolean(req.body.showMilestones);
+        if (req.body.showCta !== undefined) updates.showCta = Boolean(req.body.showCta);
 
         if (username !== undefined) {
             const normalizedUsername = (username || '').toLowerCase().trim().replace(/\s+/g, '_');

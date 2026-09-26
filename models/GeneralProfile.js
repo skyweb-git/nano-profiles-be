@@ -17,7 +17,7 @@ const generalProfileSchema = new mongoose.Schema({
         type: String,
         trim: true,
         default: 'general',
-        enum: ['general', 'restaurant'],
+        enum: ['general', 'restaurant', 'founder'],
         index: true
     },
     username: {
@@ -98,6 +98,33 @@ const generalProfileSchema = new mongoose.Schema({
     paymentAmount: { type: Number, default: 0 },
     paymentPayeeName: { type: String, trim: true, default: '' },
     paymentNote: { type: String, trim: true, default: '' },
+    // Founder-specific fields
+    companyName: { type: String, trim: true, default: '' },
+    companyWebsite: { type: String, trim: true, default: '' },
+    foundingYear: { type: String, trim: true, default: '' },
+    companyDescription: { type: String, trim: true, default: '' },
+    companyImage: { type: String, trim: true, default: '' },
+    fundingStage: { type: String, trim: true, default: '' }, // 'Bootstrapped', 'Pre-seed', 'Seed', 'Series A', 'Series B+'
+    teamSize: { type: String, trim: true, default: '' },
+    pitchDeckPdf: { type: String, trim: true, default: '' },
+    ctaLabel: { type: String, trim: true, default: 'Book a Call' },
+    ctaUrl: { type: String, trim: true, default: '' },
+    coFounders: [{
+        name: { type: String, trim: true, default: '' },
+        role: { type: String, trim: true, default: '' },
+        photo: { type: String, trim: true, default: '' },
+        linkedin: { type: String, trim: true, default: '' },
+        username: { type: String, trim: true, default: '' },
+        nanoUsername: { type: String, trim: true, default: '' }
+    }],
+    milestones: [{
+        label: { type: String, trim: true, default: '' }
+    }],
+    showCompany: { type: Boolean, default: true },
+    showPitchDeck: { type: Boolean, default: true },
+    showCoFounders: { type: Boolean, default: true },
+    showMilestones: { type: Boolean, default: true },
+    showCta: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now }
 }, { timestamps: true });

@@ -20,11 +20,14 @@ const { sendOtpEmail, sendWelcomeEmail, isConfigured: isSmtpConfigured } = requi
 const multer = require('multer');
 const { uploadBuffer } = require('../utils/cloudinary');
 
+const ADMIN_JWT_EXPIRES_IN = process.env.ADMIN_JWT_EXPIRES_IN || '30d';
+const ADMIN_COOKIE_MAX_AGE_MS = parseInt(process.env.ADMIN_COOKIE_MAX_AGE_MS, 10) || (30 * 24 * 60 * 60 * 1000);
+
 const adminCookieOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: ADMIN_COOKIE_MAX_AGE_MS,
     path: '/'
 };
 
@@ -106,12 +109,13 @@ router.post('/verify-otp', loginLimiter, async (req, res) => {
         const token = jwt.sign(
             { email, type: 'admin' },
             process.env.JWT_SECRET,
-            { expiresIn: '24h' }
+            { expiresIn: ADMIN_JWT_EXPIRES_IN }
         );
         res.cookie('admin_token', token, adminCookieOptions);
         res.json({
             success: true,
             message: 'Login successful',
+            token,
             admin: { email }
         });
     } catch (error) {
@@ -121,10 +125,20 @@ router.post('/verify-otp', loginLimiter, async (req, res) => {
 });
 
 // @route   GET /api/admin/session
-// @desc    Check whether the admin auth cookie/bearer token is valid
+// @desc    Check whether the admin auth cookie/bearer token is valid & refresh token (sliding session)
 // @access  Protected
 router.get('/session', authMiddleware, adminLimiter, (req, res) => {
-    res.json({ success: true, admin: { email: req.admin.email } });
+    try {
+        const renewedToken = jwt.sign(
+            { email: req.admin.email, type: 'admin' },
+            process.env.JWT_SECRET,
+            { expiresIn: ADMIN_JWT_EXPIRES_IN }
+        );
+        res.cookie('admin_token', renewedToken, adminCookieOptions);
+        res.json({ success: true, token: renewedToken, admin: { email: req.admin.email } });
+    } catch {
+        res.json({ success: true, admin: { email: req.admin.email } });
+    }
 });
 
 // @route   POST /api/admin/logout
@@ -502,6 +516,7 @@ const adminUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize
 function normalizeProfileType(raw) {
     const v = String(raw || '').toLowerCase().trim();
     if (v === 'restaurant' || v === 'resturent' || v === 'resturant') return 'restaurant';
+    if (v === 'founder') return 'founder';
     return 'general';
 }
 
@@ -518,6 +533,10 @@ function buildTypeQueryCond(requestedType) {
                 }
             ]
         };
+    }
+
+    if (requestedType === 'founder') {
+        return { profileType: 'founder' };
     }
 
     return {
@@ -565,7 +584,7 @@ router.get('/general-profiles', authMiddleware, adminLimiter, async (req, res) =
             ];
         }
 
-        if (type) {
+        if (type && type !== 'all') {
             const requestedType = normalizeProfileType(type);
             query.$and = query.$and || [];
             query.$and.push(buildTypeQueryCond(requestedType));
@@ -608,7 +627,10 @@ router.get('/general-profiles/:id', authMiddleware, adminLimiter, async (req, re
 
 router.post('/general-profiles', authMiddleware, adminLimiter, async (req, res) => {
     try {
-        const { username, name, title, bio, photo, menuPdf, theme, font, bioFont, links, social } = req.body;
+        const {
+            username, name, title, bio, photo, menuPdf, theme, font, bioFont, links, social,
+            companyName, companyWebsite, foundingYear, fundingStage, teamSize, pitchDeckPdf, ctaLabel, ctaUrl, coFounders, milestones
+        } = req.body;
         const profileType = normalizeProfileType(req.body.profileType || req.body.type || (menuPdf && String(menuPdf).trim() ? 'restaurant' : 'general'));
         const normalizedUsername = (username || '').toLowerCase().trim().replace(/\s+/g, '_');
         if (!normalizedUsername || !/^[a-z0-9_-]+$/.test(normalizedUsername)) {
@@ -631,7 +653,17 @@ router.post('/general-profiles', authMiddleware, adminLimiter, async (req, res) 
             links: Array.isArray(links) ? links : [],
             social: social || {},
             profileType,
-            ownerEmail: (req.body.ownerEmail || '').toLowerCase().trim()
+            ownerEmail: (req.body.ownerEmail || '').toLowerCase().trim(),
+            companyName: companyName || '',
+            companyWebsite: companyWebsite || '',
+            foundingYear: foundingYear || '',
+            fundingStage: fundingStage || '',
+            teamSize: teamSize || '',
+            pitchDeckPdf: pitchDeckPdf || '',
+            ctaLabel: ctaLabel || 'Book a Call',
+            ctaUrl: ctaUrl || '',
+            coFounders: Array.isArray(coFounders) ? coFounders : [],
+            milestones: Array.isArray(milestones) ? milestones : []
         });
         res.json({ success: true, data: profile });
         
@@ -744,6 +776,16 @@ router.put('/general-profiles/:id', authMiddleware, adminLimiter, async (req, re
         if (bioFont !== undefined) profile.bioFont = bioFont;
         if (Array.isArray(links)) profile.links = links;
         if (social && typeof social === 'object') profile.social = { ...profile.social.toObject?.() || profile.social, ...social };
+        if (req.body.companyName !== undefined) profile.companyName = req.body.companyName;
+        if (req.body.companyWebsite !== undefined) profile.companyWebsite = req.body.companyWebsite;
+        if (req.body.foundingYear !== undefined) profile.foundingYear = req.body.foundingYear;
+        if (req.body.fundingStage !== undefined) profile.fundingStage = req.body.fundingStage;
+        if (req.body.teamSize !== undefined) profile.teamSize = req.body.teamSize;
+        if (req.body.pitchDeckPdf !== undefined) profile.pitchDeckPdf = req.body.pitchDeckPdf;
+        if (req.body.ctaLabel !== undefined) profile.ctaLabel = req.body.ctaLabel;
+        if (req.body.ctaUrl !== undefined) profile.ctaUrl = req.body.ctaUrl;
+        if (Array.isArray(req.body.coFounders)) profile.coFounders = req.body.coFounders;
+        if (Array.isArray(req.body.milestones)) profile.milestones = req.body.milestones;
         profile.profileType = profileType;
         await profile.save();
         res.json({ success: true, message: 'Profile updated successfully', data: profile });
