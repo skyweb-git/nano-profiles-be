@@ -39,6 +39,13 @@ const generalProfileSchema = new mongoose.Schema({
     phone: { type: String, trim: true, default: '' },
     email: { type: String, trim: true, default: '' },
     photo: { type: String, trim: true, default: '' },
+    /** Company profiles only: hero logo layout */
+    photoAspect: {
+        type: String,
+        trim: true,
+        enum: ['portrait', 'landscape'],
+        default: 'portrait'
+    },
     banner: { type: String, trim: true, default: '' },
     menuPdf: { type: String, trim: true, default: '' },
     theme: {
