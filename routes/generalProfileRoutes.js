@@ -207,8 +207,24 @@ function mapGeneralProfileResponse(profile, requestedType) {
         pitchDeckPdf: profile.pitchDeckPdf || '',
         ctaLabel: profile.ctaLabel || 'Book a Call',
         ctaUrl: profile.ctaUrl || '',
-        coFounders: profile.coFounders || [],
-        milestones: profile.milestones || [],
+        coFounders: (profile.coFounders || []).map((cf) => ({
+            name: cf.name || '',
+            role: cf.role || '',
+            photo: cf.photo || '',
+            linkedin: cf.linkedin || '',
+            username: (cf.username || cf.nanoUsername || '').toLowerCase().trim(),
+            nanoUsername: (cf.nanoUsername || cf.username || '').toLowerCase().trim(),
+            artistId: (cf.artistId || '').toLowerCase().trim(),
+            profileType: cf.profileType || ''
+        })),
+        milestones: (profile.milestones || []).map((m) => ({
+            label: m.label || m.name || '',
+            name: m.name || m.label || '',
+            photo: m.photo || '',
+            username: (m.username || m.nanoUsername || '').toLowerCase().trim(),
+            nanoUsername: (m.nanoUsername || m.username || '').toLowerCase().trim(),
+            profileType: m.profileType || ''
+        })),
         showCompany: profile.showCompany !== false,
         showPitchDeck: profile.showPitchDeck !== false,
         showCoFounders: profile.showCoFounders !== false,
@@ -649,9 +665,12 @@ router.put('/me', firebaseAuth, async (req, res) => {
         if (requestedType) {
             const typeCond = buildTypeQueryCond(requestedType);
             profile = await GeneralProfile.findOne({ $and: [ownerCond, typeCond] });
-        }
-        // One document per username: upgrading "general" → "restaurant" or "founder" must update the same row.
-        if (!profile) {
+            // Only fall back across types for legacy general → restaurant/founder upgrades.
+            // Never write company/founder data onto a different profileType document.
+            if (!profile && (requestedType === 'restaurant' || requestedType === 'founder')) {
+                profile = await GeneralProfile.findOne(ownerCond);
+            }
+        } else {
             profile = await GeneralProfile.findOne(ownerCond);
         }
         if (!profile) {
@@ -755,11 +774,17 @@ router.put('/me', firebaseAuth, async (req, res) => {
         }
 
         Object.assign(profile, updates);
+        // Ensure array replacements are persisted (DocumentArray change detection)
+        if (Object.prototype.hasOwnProperty.call(updates, 'links')) profile.markModified('links');
+        if (Object.prototype.hasOwnProperty.call(updates, 'coFounders')) profile.markModified('coFounders');
+        if (Object.prototype.hasOwnProperty.call(updates, 'milestones')) profile.markModified('milestones');
+        if (Object.prototype.hasOwnProperty.call(updates, 'gallery')) profile.markModified('gallery');
+        if (Object.prototype.hasOwnProperty.call(updates, 'suggestions')) profile.markModified('suggestions');
         await profile.save();
 
         res.json({
             success: true,
-            data: mapGeneralProfileResponse(profile, requestedType)
+            data: mapGeneralProfileResponse(profile, requestedType || profile.profileType)
         });
     } catch (error) {
         console.error('Error updating general profile:', error);

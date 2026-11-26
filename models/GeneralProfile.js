@@ -135,8 +135,10 @@ const generalProfileSchema = new mongoose.Schema({
         role: { type: String, trim: true, default: '' },
         photo: { type: String, trim: true, default: '' },
         linkedin: { type: String, trim: true, default: '' },
-        username: { type: String, trim: true, default: '' },
-        nanoUsername: { type: String, trim: true, default: '' }
+        username: { type: String, trim: true, lowercase: true, default: '' },
+        nanoUsername: { type: String, trim: true, lowercase: true, default: '' },
+        artistId: { type: String, trim: true, lowercase: true, default: '' },
+        profileType: { type: String, trim: true, default: '' }
     }],
     milestones: [{
         label: { type: String, trim: true, default: '' },
