@@ -106,6 +106,13 @@ const generalProfileSchema = new mongoose.Schema({
     paymentPayeeName: { type: String, trim: true, default: '' },
     paymentNote: { type: String, trim: true, default: '' },
     // Founder-specific fields
+    /** Founder → linked Nano company profile username */
+    linkedCompanyUsername: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        default: ''
+    },
     companyName: { type: String, trim: true, default: '' },
     companyWebsite: { type: String, trim: true, default: '' },
     foundingYear: { type: String, trim: true, default: '' },
@@ -132,7 +139,13 @@ const generalProfileSchema = new mongoose.Schema({
         nanoUsername: { type: String, trim: true, default: '' }
     }],
     milestones: [{
-        label: { type: String, trim: true, default: '' }
+        label: { type: String, trim: true, default: '' },
+        // Trusted By (company profiles): linked client company Nano profiles
+        name: { type: String, trim: true, default: '' },
+        photo: { type: String, trim: true, default: '' },
+        username: { type: String, trim: true, lowercase: true, default: '' },
+        nanoUsername: { type: String, trim: true, lowercase: true, default: '' },
+        profileType: { type: String, trim: true, default: '' }
     }],
     showCompany: { type: Boolean, default: true },
     showPitchDeck: { type: Boolean, default: true },

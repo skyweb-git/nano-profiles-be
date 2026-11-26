@@ -196,6 +196,7 @@ function mapGeneralProfileResponse(profile, requestedType) {
         paymentPayeeName: profile.paymentPayeeName || profile.name || '',
         paymentNote: profile.paymentNote || '',
         // Founder-specific fields
+        linkedCompanyUsername: (profile.linkedCompanyUsername || '').toLowerCase().trim(),
         companyName: profile.companyName || '',
         companyWebsite: profile.companyWebsite || '',
         foundingYear: profile.foundingYear || '',
@@ -591,6 +592,7 @@ router.post('/', firebaseAuth, async (req, res) => {
             showGallery: showGallery !== false,
             artLinks: artLinks || {},
             // Founder-specific fields
+            linkedCompanyUsername: String(req.body.linkedCompanyUsername || '').toLowerCase().trim().replace(/^@+/, ''),
             companyName: String(req.body.companyName || '').trim(),
             companyWebsite: String(req.body.companyWebsite || '').trim(),
             foundingYear: String(req.body.foundingYear || '').trim(),
@@ -708,6 +710,12 @@ router.put('/me', firebaseAuth, async (req, res) => {
         if (req.body.paymentNote !== undefined) updates.paymentNote = (req.body.paymentNote || '').trim();
 
         // Founder-specific fields
+        if (req.body.linkedCompanyUsername !== undefined) {
+            updates.linkedCompanyUsername = String(req.body.linkedCompanyUsername || '')
+                .toLowerCase()
+                .trim()
+                .replace(/^@+/, '');
+        }
         if (req.body.companyName !== undefined) updates.companyName = String(req.body.companyName || '').trim();
         if (req.body.companyWebsite !== undefined) updates.companyWebsite = String(req.body.companyWebsite || '').trim();
         if (req.body.foundingYear !== undefined) updates.foundingYear = String(req.body.foundingYear || '').trim();
