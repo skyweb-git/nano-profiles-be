@@ -148,80 +148,7 @@ function buildTypeQueryCond(requestedType) {
     };
 }
 
-function extractMemberUsername(cf) {
-    const raw = String(cf?.nanoUsername || cf?.username || cf?.artistId || cf?.handle || '').trim();
-    if (!raw) {
-        if (cf?.name && String(cf.name).startsWith('@')) {
-            return String(cf.name).replace(/^@+/, '').toLowerCase().trim();
-        }
-        return '';
-    }
-    const linkMatch = raw.match(/\/(?:link|artist|a|founder|company|restaurant)\/([a-zA-Z0-9_.-]+)/i);
-    return (linkMatch && linkMatch[1] ? linkMatch[1] : raw.replace(/^@+/, '')).toLowerCase().trim();
-}
-
-async function resolveTeamMemberLive(username) {
-    const u = String(username || '').toLowerCase().trim();
-    if (!u) return null;
-
-    const gp = await GeneralProfile.findOne({ username: u }).lean();
-    if (gp) {
-        const type = gp.profileType || 'general';
-        return {
-            name: String(gp.name || '').replace(/\|/g, ' ').trim() || `@${u}`,
-            role: gp.title || gp.experience || (type === 'founder' ? 'Founder' : 'Team Member'),
-            photo: gp.photo || '',
-            profileType: type,
-            nanoUsername: u,
-            username: u
-        };
-    }
-
-    const idRegex = new RegExp(`^${u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
-    const artist = await Artist.findOne({
-        $or: [{ artistId: u }, { code: u }, { artistId: idRegex }, { code: idRegex }]
-    }).lean();
-    if (artist) {
-        const id = String(artist.artistId || artist.code || u).toLowerCase();
-        return {
-            name: String(artist.name || '').replace(/\|/g, ' ').trim() || `@${id}`,
-            role: artist.experience || artist.specialization || artist.category || 'Artist',
-            photo: artist.photo || '',
-            profileType: 'artist',
-            artistId: id,
-            nanoUsername: id,
-            username: id
-        };
-    }
-    return null;
-}
-
-/** Overlay live name/photo/role onto stored team stubs so Leadership cards stay current. */
-async function enrichCoFounders(list) {
-    if (!Array.isArray(list) || list.length === 0) return [];
-    return Promise.all(list.map(async (cf) => {
-        const base = cf && typeof cf === 'object' ? { ...cf } : {};
-        const uname = extractMemberUsername(base);
-        if (!uname) return base;
-        try {
-            const live = await resolveTeamMemberLive(uname);
-            if (!live) {
-                return { ...base, nanoUsername: uname, username: uname };
-            }
-            return {
-                ...base,
-                ...live,
-                // keep any custom role only if live role is empty
-                role: live.role || base.role || 'Team Member'
-            };
-        } catch (err) {
-            console.warn('enrichCoFounders lookup failed for', uname, err?.message || err);
-            return { ...base, nanoUsername: uname, username: uname };
-        }
-    }));
-}
-
-async function mapGeneralProfileResponse(profile, requestedType) {
+function mapGeneralProfileResponse(profile, requestedType) {
     if (!profile) return null;
     return {
         username: profile.username,
@@ -272,7 +199,7 @@ async function mapGeneralProfileResponse(profile, requestedType) {
         pitchDeckPdf: profile.pitchDeckPdf || '',
         ctaLabel: profile.ctaLabel || 'Book a Call',
         ctaUrl: profile.ctaUrl || '',
-        coFounders: await enrichCoFounders(profile.coFounders || []),
+        coFounders: profile.coFounders || [],
         milestones: profile.milestones || [],
         showCompany: profile.showCompany !== false,
         showPitchDeck: profile.showPitchDeck !== false,
@@ -325,7 +252,7 @@ router.get('/lookup-by-email', async (req, res) => {
                 source: 'general',
                 profileType: generalProfile.profileType || 'general',
                 username: generalProfile.username,
-                data: await mapGeneralProfileResponse(generalProfile, generalProfile.profileType || 'general')
+                data: mapGeneralProfileResponse(generalProfile, generalProfile.profileType || 'general')
             });
         }
 
@@ -469,7 +396,7 @@ router.post('/register-mobile', async (req, res) => {
         res.json({
             success: true,
             message: 'Profile registered successfully',
-            data: await mapGeneralProfileResponse(profile, profileType)
+            data: mapGeneralProfileResponse(profile, profileType)
         });
     } catch (error) {
         console.error('Error registering mobile profile:', error);
@@ -560,7 +487,7 @@ router.get('/u/:username', async (req, res) => {
         }
         res.json({
             success: true,
-            data: await mapGeneralProfileResponse(profile, profile.profileType || 'general')
+            data: mapGeneralProfileResponse(profile, profile.profileType || 'general')
         });
     } catch (error) {
         console.error('Error fetching general profile:', error);
@@ -591,7 +518,7 @@ router.get('/me', firebaseAuth, async (req, res) => {
         }
         res.json({
             success: true,
-            data: await mapGeneralProfileResponse(profile, requestedType)
+            data: mapGeneralProfileResponse(profile, requestedType)
         });
     } catch (error) {
         console.error('Error fetching my general profile:', error);
@@ -676,7 +603,7 @@ router.post('/', firebaseAuth, async (req, res) => {
 
         res.json({
             success: true,
-            data: await mapGeneralProfileResponse(profile, requestedType)
+            data: mapGeneralProfileResponse(profile, requestedType)
         });
 
         // Send public welcome email asynchronously
@@ -809,7 +736,7 @@ router.put('/me', firebaseAuth, async (req, res) => {
 
         res.json({
             success: true,
-            data: await mapGeneralProfileResponse(profile, requestedType)
+            data: mapGeneralProfileResponse(profile, requestedType)
         });
     } catch (error) {
         console.error('Error updating general profile:', error);
@@ -865,7 +792,7 @@ router.get('/sample', async (req, res) => {
 
         res.json({
             success: true,
-            data: await mapGeneralProfileResponse(profile, 'general')
+            data: mapGeneralProfileResponse(profile, 'general')
         });
     } catch (error) {
         console.error('Error fetching sample general profile:', error);
