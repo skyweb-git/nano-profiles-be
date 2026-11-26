@@ -111,6 +111,7 @@ function normalizeProfileType(raw) {
     const v = String(raw || '').toLowerCase().trim();
     if (v === 'restaurant' || v === 'resturent' || v === 'resturant') return 'restaurant';
     if (v === 'founder') return 'founder';
+    if (v === 'company') return 'company';
     return 'general';
 }
 
@@ -132,6 +133,10 @@ function buildTypeQueryCond(requestedType) {
 
     if (requestedType === 'founder') {
         return { profileType: 'founder' };
+    }
+
+    if (requestedType === 'company') {
+        return { profileType: 'company' };
     }
 
     // general
@@ -383,7 +388,7 @@ router.post('/register-mobile', async (req, res) => {
             links: Array.isArray(req.body.links) ? req.body.links : [],
             social: req.body.social || {},
             gallery: [],
-            suggestionsTitle: profileType === 'founder' ? 'VENTURES & PRODUCTS' : 'What I Do',
+            suggestionsTitle: (profileType === 'founder' || profileType === 'company') ? 'VENTURES & PRODUCTS' : 'What I Do',
             suggestions: [],
             profileType: profileType,
             isSetup: true,
