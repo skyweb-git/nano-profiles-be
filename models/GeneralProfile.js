@@ -17,7 +17,7 @@ const generalProfileSchema = new mongoose.Schema({
         type: String,
         trim: true,
         default: 'general',
-        enum: ['general', 'restaurant', 'founder'],
+        enum: ['general', 'restaurant', 'founder', 'company'],
         index: true
     },
     username: {

@@ -318,11 +318,18 @@ router.get('/public/:artistId', async (req, res) => {
             });
         }
 
-        // Flexible lookup: first by artistId, then support numeric IDs similar to /profile
-        let artist = await Artist.findOne({ artistId, isActive: true });
-
-        // Removed numeric AT- fallback as requested.
-
+        // Flexible lookup: artistId or code (case-insensitive)
+        const normalizedId = String(artistId || '').toLowerCase().trim();
+        const idRegex = new RegExp(`^${normalizedId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+        let artist = await Artist.findOne({
+            isActive: true,
+            $or: [
+                { artistId: normalizedId },
+                { code: normalizedId },
+                { artistId: idRegex },
+                { code: idRegex }
+            ]
+        });
 
         if (!artist) {
             return res.status(404).json({

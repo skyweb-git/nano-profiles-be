@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const GeneralProfile = require('../models/GeneralProfile');
+const Artist = require('../models/Artist');
 const { firebaseAuth } = require('../middleware/firebaseAuth');
 const { uploadBuffer } = require('../utils/cloudinary');
 const { checkProfileConflict, getProfileConflicts, generateUsernameSuggestions } = require('../utils/profileUtils');
@@ -228,6 +229,181 @@ router.post('/upload-pdf', firebaseAuth, upload.single('file'), async (req, res)
     }
 });
 
+// @route   GET /api/general-profile/lookup-by-email
+// @desc    Verify if a profile exists for a given email and return the profile data if found
+// @access  Public
+router.get('/lookup-by-email', async (req, res) => {
+    try {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        const email = (req.query.email || '').toLowerCase().trim();
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email query parameter is required' });
+        }
+
+        // 1. Check GeneralProfile (by ownerEmail or email)
+        const generalProfile = await GeneralProfile.findOne({
+            $or: [{ ownerEmail: email }, { email: email }]
+        }).lean();
+
+        if (generalProfile) {
+            return res.json({
+                success: true,
+                exists: true,
+                source: 'general',
+                profileType: generalProfile.profileType || 'general',
+                username: generalProfile.username,
+                data: mapGeneralProfileResponse(generalProfile, generalProfile.profileType || 'general')
+            });
+        }
+
+        // 2. Check Artist (by ownerEmail or email)
+        const artist = await Artist.findOne({
+            $or: [{ ownerEmail: email }, { email: email }]
+        }).lean();
+
+        if (artist) {
+            const mappedArtist = {
+                username: artist.artistId || artist.code || '',
+                name: artist.name || '',
+                title: artist.category || 'Artist & Creator',
+                specialization: Array.isArray(artist.mediums) ? artist.mediums.join(', ') : '',
+                city: artist.city || '',
+                state: artist.state || '',
+                bio: artist.bio || artist.experience || '',
+                phone: artist.phone || '',
+                email: artist.email || artist.ownerEmail || email,
+                photo: artist.photo || '',
+                banner: artist.backgroundPhoto || '',
+                menuPdf: '',
+                theme: artist.theme || 'mint',
+                font: 'outfit',
+                bioFont: 'outfit',
+                links: (artist.links || []).map(l => ({
+                    _id: l._id ? String(l._id) : undefined,
+                    title: l.title || l.platform || 'Link',
+                    url: l.url || '',
+                    platform: l.platform || 'website',
+                    clicks: l.clicks || 0,
+                    layoutType: 'classic'
+                })),
+                social: artist.social || {},
+                profileType: 'artist',
+                gallery: (artist.gallery || []).slice(0, 3).map(g => ({ url: g.url || '', name: g.name || '' })),
+                suggestionsTitle: 'Artworks & Portfolio',
+                suggestions: (artist.gallery || []).slice(0, 4).map(g => ({
+                    url: g.url || '',
+                    caption: g.name || '',
+                    description: '',
+                    link: g.link || ''
+                })),
+                isSetup: artist.isSetup !== false,
+                artLinks: artist.artLinks || {},
+                companyName: '',
+                companyWebsite: '',
+                foundingYear: '',
+                companyDescription: '',
+                companyImage: '',
+                fundingStage: '',
+                teamSize: '',
+                pitchDeckPdf: '',
+                ctaLabel: 'Contact Artist',
+                ctaUrl: '',
+                coFounders: [],
+                milestones: []
+            };
+
+            return res.json({
+                success: true,
+                exists: true,
+                source: 'artist',
+                profileType: 'artist',
+                username: artist.artistId || artist.code || '',
+                data: mappedArtist
+            });
+        }
+
+        // 3. Not found
+        return res.json({
+            success: true,
+            exists: false,
+            message: 'No profile found for this email. Please register.'
+        });
+    } catch (error) {
+        console.error('Error looking up profile by email:', error);
+        res.status(500).json({ success: false, message: error.message || 'Server error' });
+    }
+});
+
+// @route   POST /api/general-profile/register-mobile
+// @desc    Register a new profile directly from mobile app
+// @access  Public
+router.post('/register-mobile', async (req, res) => {
+    try {
+        const email = (req.body.email || '').toLowerCase().trim();
+        const rawName = (req.body.name || '').trim();
+        let rawUsername = (req.body.username || '').toLowerCase().trim().replace(/\s+/g, '_');
+        const title = (req.body.title || '').trim();
+        const bio = (req.body.bio || '').trim();
+        const photo = (req.body.photo || '').trim();
+        const profileType = normalizeProfileType(req.body.profileType || 'general');
+
+        if (!email || !email.includes('@')) {
+            return res.status(400).json({ success: false, message: 'Valid email is required to register.' });
+        }
+
+        // If username not provided, generate from email prefix or name
+        if (!rawUsername) {
+            const base = (email.split('@')[0] || rawName || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+            const suggestions = await generateUsernameSuggestions(base);
+            rawUsername = suggestions.length > 0 ? suggestions[0] : `${base}_${Math.floor(Math.random() * 1000)}`;
+        }
+
+        // Check conflicts
+        const conflict = await checkProfileConflict(rawUsername, email);
+        if (conflict) {
+            return res.status(400).json({ success: false, message: conflict });
+        }
+
+        const profile = await GeneralProfile.create({
+            username: rawUsername,
+            name: rawName || rawUsername,
+            title: title || 'Professional',
+            specialization: req.body.specialization || '',
+            city: req.body.city || '',
+            state: req.body.state || '',
+            bio: bio || 'Welcome to my Nano Profile!',
+            phone: req.body.phone || '',
+            email: email,
+            ownerEmail: email,
+            photo: photo || '',
+            banner: '',
+            theme: req.body.theme || 'mint',
+            font: 'outfit',
+            bioFont: 'outfit',
+            links: Array.isArray(req.body.links) ? req.body.links : [],
+            social: req.body.social || {},
+            gallery: [],
+            suggestionsTitle: profileType === 'founder' ? 'VENTURES & PRODUCTS' : 'What I Do',
+            suggestions: [],
+            profileType: profileType,
+            isSetup: true,
+            companyName: req.body.companyName || '',
+            companyWebsite: req.body.companyWebsite || '',
+            foundingYear: req.body.foundingYear || '',
+            coFounders: []
+        });
+
+        res.json({
+            success: true,
+            message: 'Profile registered successfully',
+            data: mapGeneralProfileResponse(profile, profileType)
+        });
+    } catch (error) {
+        console.error('Error registering mobile profile:', error);
+        res.status(500).json({ success: false, message: error.message || 'Registration failed' });
+    }
+});
+
 // @route   GET /api/general-profile/u/:username
 // @desc    Get public profile by username (for shareable link)
 // @access  Public
@@ -237,8 +413,73 @@ router.get('/u/:username', async (req, res) => {
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
         const username = req.params.username.toLowerCase().trim();
-        const profile = await GeneralProfile.findOne({ username }).lean();
+        let profile = await GeneralProfile.findOne({ username }).lean();
         if (!profile) {
+            // Artists live in a separate collection (artistId / code), not GeneralProfile.username
+            const artist = await Artist.findOne({
+                $or: [
+                    { artistId: username },
+                    { code: username },
+                    { artistId: new RegExp(`^${username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+                    { code: new RegExp(`^${username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+                ]
+            }).lean();
+
+            if (artist) {
+                return res.json({
+                    success: true,
+                    data: {
+                        username: artist.artistId || artist.code || username,
+                        name: artist.name || '',
+                        title: artist.category || 'Artist & Creator',
+                        specialization: Array.isArray(artist.mediums) ? artist.mediums.join(', ') : '',
+                        city: artist.city || '',
+                        state: artist.state || '',
+                        bio: artist.bio || artist.experience || '',
+                        phone: artist.phone || '',
+                        email: artist.email || artist.ownerEmail || '',
+                        photo: artist.photo || '',
+                        banner: artist.backgroundPhoto || '',
+                        menuPdf: '',
+                        theme: artist.theme || 'mint',
+                        font: 'outfit',
+                        bioFont: 'outfit',
+                        links: (artist.links || []).map(l => ({
+                            _id: l._id ? String(l._id) : undefined,
+                            title: l.title || l.platform || 'Link',
+                            url: l.url || '',
+                            platform: l.platform || 'website',
+                            clicks: l.clicks || 0,
+                            layoutType: 'classic'
+                        })),
+                        social: artist.social || {},
+                        profileType: 'artist',
+                        gallery: (artist.gallery || []).slice(0, 3).map(g => ({ url: g.url || '', name: g.name || '' })),
+                        suggestionsTitle: 'Artworks & Portfolio',
+                        suggestions: (artist.gallery || []).slice(0, 4).map(g => ({
+                            url: g.url || '',
+                            caption: g.name || '',
+                            description: '',
+                            link: g.link || ''
+                        })),
+                        isSetup: artist.isSetup !== false,
+                        artLinks: artist.artLinks || {},
+                        companyName: '',
+                        companyWebsite: '',
+                        foundingYear: '',
+                        companyDescription: '',
+                        companyImage: '',
+                        fundingStage: '',
+                        teamSize: '',
+                        pitchDeckPdf: '',
+                        ctaLabel: 'Contact Artist',
+                        ctaUrl: '',
+                        coFounders: [],
+                        milestones: []
+                    }
+                });
+            }
+
             return res.status(404).json({
                 success: false,
                 message: 'Profile not found'
