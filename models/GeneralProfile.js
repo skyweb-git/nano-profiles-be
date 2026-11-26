@@ -111,6 +111,13 @@ const generalProfileSchema = new mongoose.Schema({
     foundingYear: { type: String, trim: true, default: '' },
     companyDescription: { type: String, trim: true, default: '' },
     companyImage: { type: String, trim: true, default: '' },
+    /** Company & Venture image layout — independent from top logo photoAspect */
+    companyImageAspect: {
+        type: String,
+        trim: true,
+        enum: ['portrait', 'landscape'],
+        default: 'landscape'
+    },
     fundingStage: { type: String, trim: true, default: '' }, // 'Bootstrapped', 'Pre-seed', 'Seed', 'Series A', 'Series B+'
     teamSize: { type: String, trim: true, default: '' },
     pitchDeckPdf: { type: String, trim: true, default: '' },

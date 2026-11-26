@@ -180,6 +180,7 @@ function mapGeneralProfileResponse(profile, requestedType) {
         isSetup: profile.isSetup || false,
         showPhoto: profile.showPhoto !== false,
         photoAspect: (profile.photoAspect === 'landscape' ? 'landscape' : 'portrait'),
+        companyImageAspect: (profile.companyImageAspect === 'portrait' ? 'portrait' : 'landscape'),
         showName: profile.showName !== false,
         showLocation: profile.showLocation !== false,
         showSpecialization: profile.showSpecialization !== false,
@@ -564,6 +565,7 @@ router.post('/', firebaseAuth, async (req, res) => {
             email: contactEmail || '',
             photo: photo || '',
             photoAspect: (req.body.photoAspect === 'landscape' ? 'landscape' : 'portrait'),
+            companyImageAspect: (req.body.companyImageAspect === 'portrait' ? 'portrait' : 'landscape'),
             banner: banner || '',
             menuPdf: menuPdf || '',
             theme: theme || 'mint',
@@ -685,6 +687,9 @@ router.put('/me', firebaseAuth, async (req, res) => {
         if (showPhoto !== undefined) updates.showPhoto = showPhoto;
         if (req.body.photoAspect !== undefined) {
             updates.photoAspect = req.body.photoAspect === 'landscape' ? 'landscape' : 'portrait';
+        }
+        if (req.body.companyImageAspect !== undefined) {
+            updates.companyImageAspect = req.body.companyImageAspect === 'portrait' ? 'portrait' : 'landscape';
         }
         if (showName !== undefined) updates.showName = showName;
         if (showLocation !== undefined) updates.showLocation = showLocation;
